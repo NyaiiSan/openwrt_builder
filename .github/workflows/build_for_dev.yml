@@ -87,6 +87,22 @@ jobs:
           openssl enc -d -aes-256-cbc -pass pass:"${{ secrets.ENC_PASS }}" -in patch.tar.gz.enc | \
             tar --no-same-owner --no-same-permissions -xzf - -C $GITHUB_WORKSPACE/files
 
+      - name: Compute cache key
+        id: get-key
+        run: |
+          set -eux
+          cd "$GITHUB_WORKSPACE"
+          echo "target_key=$(cat .config | grep "CONFIG_TARGET.*=y" | shasum | awk '{print $1}')" >> $GITHUB_OUTPUT
+
+      - name: Cache staging_dir
+        id: cache-rootfs
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.workspace }}/staging_dir
+          key: staging-${{ steps.get-key.outputs.target_key }}
+          restore-keys: |
+            staging-
+
       - name: Check config
         shell: bash
         run: |
