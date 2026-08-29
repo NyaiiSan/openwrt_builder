@@ -1,0 +1,117 @@
+name: Build openwrt
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Runner label to use; leave empty to use ubuntu-22.04'
+        required: false
+        default: 'ubuntu-22.04'
+
+      config_url:
+        description: 'Optional URL to a kernel .config file.'
+        required: true
+        default: ''
+
+      files_url:
+        description: 'Optional URL to a kernel .config file.'
+        required: false
+        default: ''
+
+jobs:
+  build:
+    runs-on: ${{ github.event.inputs.runner }}
+    strategy:
+      fail-fast: false
+    steps:
+      - name: Initialization environment
+        shell: bash
+        run: |
+          set -eux
+          sudo apt-get install -y binutils bzip2 diffutils flex gawk gcc libc-dev libz-dev \
+            make perl python3 rsync subversion unzip swig libncurses-dev g++ \
+            python3-dev python3-setuptools python3-pyelftools
+
+      - name: Clean work space
+        shell: bash
+        run: |
+          set -eux
+          PARENT_DIR="${RUNNER_WORKSPACE}"
+          if [ -d "$PARENT_DIR" ]; then
+            find "$PARENT_DIR" -mindepth 1 -maxdepth 1 \
+              -path "$GITHUB_WORKSPACE" -prune -o \
+              -exec rm -rf -- {} +
+          fi
+          if [ -d "$GITHUB_WORKSPACE/files" ]; then
+            sudo rm -rf $GITHUB_WORKSPACE/files
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Update feeds
+        shell: bash
+        run: |
+          set -eux
+          cd $GITHUB_WORKSPACE
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Install packages
+        shell: bash
+        run: |
+          set -eux
+          cd $GITHUB_WORKSPACE/package
+          # luci-theme-argon
+          git clone https://github.com/jerrykuku/luci-theme-argon.git
+
+      - name: Download config
+        shell: bash
+        run: |
+          set -eux
+          cd "$GITHUB_WORKSPACE"
+          curl -L --fail "${{ github.event.inputs.config_url }}" -o .config
+
+      - name: Include custom files
+        if: ${{ github.event.inputs.files_url != '' }}
+        shell: bash
+        run: |
+          set -eux
+          cd "$GITHUB_WORKSPACE"
+          if [ ! -d files ]; then
+            mkdir -p $GITHUB_WORKSPACE/files
+          fi
+          curl -L --fail "${{ github.event.inputs.files_url }}" -o patch.tar.gz.enc
+          openssl enc -d -aes-256-cbc -pass pass:"${{ secrets.ENC_PASS }}" -in patch.tar.gz.enc | \
+            tar --no-same-owner --no-same-permissions -xzf - -C $GITHUB_WORKSPACE/files
+
+      - name: Check config
+        shell: bash
+        run: |
+          set -eux
+          cd "$GITHUB_WORKSPACE"
+          if [ ! -f ".config" ]; then
+            echo "No config found."
+            exit 1
+          fi
+          make defconfig
+          cat .config
+
+      - name: Build
+        shell: bash
+        run: |
+          set -eux
+          cd "$GITHUB_WORKSPACE"
+          THREADS=$(( $(nproc) + 1 ))
+          make download -j$THREADS
+          make -j$THREADS
+
+      - name: Upload openwrt artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-${{ github.run_id }}
+          path: bin/targets/
+          retention-days: 30
+          if-no-files-found: error
