@@ -21,6 +21,7 @@ on:
 jobs:
   build:
     runs-on: ${{ github.event.inputs.runner }}
+    timeout-minutes: 600
     strategy:
       fail-fast: false
     steps:
@@ -115,14 +116,21 @@ jobs:
           make defconfig
           cat .config
 
+      - name: Download
+        shell: bash
+        run: |
+          set -eux
+          cd "$GITHUB_WORKSPACE"
+          THREADS=$(( $(nproc) + 1 ))
+          make -j$THREADS V=sc download
+
       - name: Build
         shell: bash
         run: |
           set -eux
           cd "$GITHUB_WORKSPACE"
           THREADS=$(( $(nproc) + 1 ))
-          make download -j$THREADS
-          make -j$THREADS
+          make -j$THREADS V=sc
 
       - name: Upload openwrt artifacts
         uses: actions/upload-artifact@v4
